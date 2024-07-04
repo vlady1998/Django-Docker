@@ -1,0 +1,69 @@
+version: '3.9'
+
+services:
+  backend:
+    container_name: "${APP_NAME}-backend"
+    build:
+      context: .
+      dockerfile: deployment/Dockerfile
+      args:
+        - APP_NAME=${APP_NAME}
+        - APP_HOST=${APP_HOST}
+        - APP_PORT=${APP_PORT}
+    volumes:
+      - ./src:/usr/src/app/
+      - ./deployment/scripts:/app/deployment/scripts/
+    env_file: .env
+    ports:
+      - "${APP_PORT}:${APP_PORT}"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: [ "/bin/sh", "/app/deployment/scripts/backend/start.sh" ]
+
+  db:
+    image: postgres:15.2-alpine
+    container_name: "${APP_NAME}-db"
+    hostname: "${POSTGRES_HOST:-db}"
+    volumes:
+      - postgres_data_dir:/var/lib/postgresql/data/
+    env_file: .env
+    expose:
+      - "${POSTGRES_PORT:-5432}"
+    shm_size: 1g
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "${POSTGRES_DB}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+  redis:
+    container_name: "${APP_NAME}-redis"
+    image: redis:latest
+    volumes:
+        - redis_data:/data
+
+  celery-worker: &celery-worker
+    container_name: "${APP_NAME}-celery-worker"
+    build:
+      context: .
+      dockerfile: deployment/Dockerfile
+    volumes:
+      - ./src:/usr/src/app/
+      - ./deployment/scripts:/app/deployment/scripts/
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+      - backend
+    command: [ "/bin/sh", "/app/deployment/scripts/celery/start-worker.sh" ]
+
+  celery-beat:
+    <<: *celery-worker
+    container_name: "${APP_NAME}-celery-beat"
+    command: [ "/bin/sh", "/app/deployment/scripts/celery/start-beat.sh" ]
+
+volumes:
+  postgres_data_dir:
+  redis_data:
